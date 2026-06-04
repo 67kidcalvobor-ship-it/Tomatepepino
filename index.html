@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tomate Jump: ¡Esquiva los Pepinillos!</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background: #222;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            color: white;
+        }
+        #ui {
+            margin-bottom: 10px;
+            font-size: 20px;
+            font-weight: bold;
+            display: flex;
+            gap: 20px;
+        }
+        #gameCanvas {
+            background: linear-gradient(to bottom, #87CEEB, #E0F6FF);
+            border-bottom: 20px solid #8B4513;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border-radius: 4px;
+        }
+        #controls-info {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #aaa;
+            text-align: center;
+        }
+        .btn-restart {
+            margin-top: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #ff4757;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .btn-restart:hover {
+            background-color: #ff6b81;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div>Puntos: <span id="score">0</span></div>
+        <div id="boss-ui" style="display: none; color: #ff4757;">
+            HP del Jefe Pepino: <span id="boss-hp">100</span>%
+        </div>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+
+    <div id="controls-info">
+        <p><strong>Controles:</strong> Barra Espaciadora / Flecha Arriba = Saltar | Tecla 'F' / 'X' = Disparar Salsa (Solo vs Jefe)</p>
+        <button class="btn-restart" onclick="resetGame()">Reiniciar Juego</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const bossUi = document.getElementById('boss-ui');
+        const bossHpEl = document.getElementById('boss-hp');
+
+        // Estado del juego
+        let score = 0;
+        let gameOver = false;
+        let isBossFight = false;
+
+        // Propiedades físicas básicos
+        const gravity = 0.6;
+        const groundY = canvas.height - 30; // El suelo del lienzo
+
+        // Personaje: Tomate
+        const player = {
+            x: 80,
+            y: groundY - 40,
+            radius: 20,
+            vy: 0,
+            isJumping: false,
+            color: '#ff4757',
+            draw() {
+                // Cuerpo del tomate
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.closePath();
+
+                // Hojitas verdes arriba
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x - 10, this.y - this.radius - 8);
+                ctx.lineTo(this.x + 10, this.y - this.radius - 8);
+                ctx.fillStyle = '#2ed573';
+                ctx.fill();
+                ctx.closePath();
+
+                // Ojos simpáticos
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(this.x - 6, this.y - 4, 4, 0, Math.PI * 2);
+                ctx.arc(this.x + 6, this.y - 4, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(this.x - 6, this.y - 4, 1.5, 0, Math.PI * 2);
+                ctx.arc(this.x + 6, this.y - 4, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Sonrisa
+                ctx.beginPath();
+                ctx.arc(this.x, this.y + 4, 5, 0, Math.PI);
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            },
+            jump() {
+                if (!this.isJumping) {
+                    this.vy = -13;
+                    this.isJumping = true;
+                }
+            },
+            update() {
+                this.y += this.vy;
+                if (this.y < groundY - this.radius) {
+                    this.vy += gravity;
+                } else {
+                    this.y = groundY - this.radius;
+                    this.vy = 0;
+                    this.isJumping = false;
+                }
+            }
+        };
+
+        // Enemigos normales: Pepinillos
+        let obstacles = [];
+        let spawnTimer = 0;
+
+        function spawnObstacle() {
+            if (isBossFight || gameOver) return;
+            
+            const height = 30 + Math.random() * 25;
+            const width = 15;
+            obstacles.push({
+                x: canvas.width,
+                y: groundY - height,
+                width: width,
+                height: height,
+                speed: 5 + Math.floor(score / 10) // Aumenta velocidad con el score
+            });
+        }
+
+        // Proyectiles del tomate (Ketchup)
+        let bullets = [];
+        function fireBullet() {
+            if (!isBossFight || gameOver) return;
+            bullets.push({
+                x: player.x + player.radius,
+                y: player.y,
+                radius: 6,
+                speed: 8
+            });
+        }
+
+        // Jefe Supremo: El Pepino Gigante
+        const boss = {
+            x: canvas.width + 100,
+            y: groundY - 120,
+            width: 60,
+            height: 120,
+            hp: 100,
+            maxHp: 100,
+            speed: 2,
+            direction: -1, // Movimiento oscilatorio lateral
+            active: false,
+            attackTimer: 0,
+            draw() {
+                if (!this.active) return;
+                // Cuerpo del Pepino Gigante
+                ctx.fillStyle = '#1e3799'; // Verde oscuro/azulado
+                // Dibujamos un rectángulo redondeado simulando el pepino
+                ctx.beginPath();
+                ctx.roundRect(this.x, this.y, this.width, this.height, 20);
+                ctx.fillStyle = '#079992';
+                ctx.fill();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = '#38ada9';
+                ctx.stroke();
+                ctx.closePath();
+
+                // Ojos enojados del Jefe
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(this.x + 20, this.y + 30, 8, 0, Math.PI * 2);
+                ctx.arc(this.x + 40, this.y + 30, 8, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(this.x + 20, this.y + 32, 3, 0, Math.PI * 2);
+                ctx.arc(this.x + 40, this.y + 32, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Cejas enfadadas
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(this.x + 10, this.y + 18); ctx.lineTo(this.x + 26, this.y + 24);
+                ctx.moveTo(this.x + 50, this.y + 18); ctx.lineTo(this.x + 34, this.y + 24);
+                ctx.stroke();
+            },
+            update() {
+                if (!this.active) return;
+
+                // Entrar a la pantalla inicialmente
+                if (this.x > canvas.width - 150) {
+                    this.x -= 2;
+                } else {
+                    // Movimiento errático flotante una vez posicionado
+                    this.x += this.speed * this.direction;
+                    if (this.x < canvas.width - 250 || this.x > canvas.width - 80) {
+                        this.direction *= -1;
+                    }
+                }
+
+                // El jefe dispara mini pepinillos de ataque directo
+                this.attackTimer++;
+                if (this.attackTimer > 75) { 
+                    this.attackTimer = 0;
+                    obstacles.push({
+                        x: this.x,
+                        y: this.y + 30 + Math.random() * 50,
+                        width: 20,
+                        height: 20,
+                        speed: 6,
+                        isBossProjectile: true // Para diferenciar si vuela o va por el suelo
+                    });
+                }
+            }
+        };
+
+        function startBossFight() {
+            isBossFight = true;
+            boss.active = true;
+            boss.hp = 100;
+            boss.x = canvas.width + 50;
+            bossUi.style.display = 'block';
+        }
+
+        function endBossFight() {
+            isBossFight = false;
+            boss.active = false;
+            bossUi.style.display = 'none';
+            score += 25; // Bonus por derrotarlo
+            scoreEl.innerText = score;
+        }
+
+        // Lógica de colisiones (Caja vs Círculo)
+        function checkCollision(circle, rect) {
+            let closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+            let closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+            
+            let distanceX = circle.x - closestX;
+            let distanceY = circle.y - closestY;
+            
+            let distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+            return distanceSquared < (circle.radius * circle.radius);
+        }
+
+        // Reiniciar variables para nueva partida
+        function resetGame() {
+            score = 0;
+            gameOver = false;
+            isBossFight = false;
+            obstacles = [];
+            bullets = [];
+            boss.active = false;
+        player.y = groundY - player.radius;
+        player.vy = 0;
+        scoreEl.innerText = score;
+        bossUi.style.display = 'none';
+    }
+
+    // Bucle Principal del Juego (Loop)
+    function update() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!gameOver) {
+            player.update();
+
+            // Control de aparición de enemigos comunes
+            if (!isBossFight) {
+                spawnTimer++;
+                if (spawnTimer > Math.max(40, 90 - score)) { // Aparecen más rápido a mayor score
+                    spawnObstacle();
+                    spawnTimer = 0;
+                }
+                // Activar el jefe cada 30 puntos alcanzados
+                if (score > 0 && score % 30 === 0) {
+                    startBossFight();
+                }
+            } else {
+                boss.update();
+            }
+
+            // Manejo de proyectiles del tomate (Ketchup)
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                let b = bullets[i];
+                b.x += b.speed;
+                
+                // Dibujar salsa
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#d63031';
+                ctx.fill();
+                ctx.closePath();
+
+                // Colisión de bala con el jefe
+                if (boss.active && b.x > boss.x && b.x < boss.x + boss.width && b.y > boss.y && b.y < boss.y + boss.height) {
+                    boss.hp -= 5; // Daño al jefe
+                    bossHpEl.innerText = boss.hp;
+                    bullets.splice(i, 1);
+
+                    if (boss.hp <= 0) {
+                        endBossFight();
+                    }
+                    continue;
+                }
+
+                // Limpieza de balas fuera de pantalla
+                if (b.x > canvas.width) bullets.splice(i, 1);
+            }
+
+            // Manejo de obstáculos (Pepinillos normales o proyectiles del jefe)
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                let o = obstacles[i];
+                o.x -= o.speed;
+
+                // Dibujar Pepinillo
+                ctx.fillStyle = '#26de81';
+                ctx.beginPath();
+                ctx.roundRect(o.x, o.y, o.width, o.height, 5);
+                ctx.fill();
+                // Detalles del pepinillo (puntos oscuros)
+                ctx.fillStyle = '#20bf6b';
+                ctx.fillRect(o.x + o.width/2, o.y + o.height/3, 3, 3);
+                ctx.fillRect(o.x + o.width/4, o.y + o.height/1.5, 3, 3);
+
+                // Colisión con el jugador Tomate
+                if (checkCollision(player, o)) {
+                    gameOver = true;
+                }
+
+                // Si pasa con éxito el obstáculo
+                if (o.x + o.width < 0) {
+                    obstacles.splice(i, 1);
+                    if (!isBossFight) {
+                        score++;
+                        scoreEl.innerText = score;
+                    }
+                }
+            }
+
+            // Verificar colisión directa con el cuerpo físico del jefe
+            if (boss.active && checkCollision(player, boss)) {
+                gameOver = true;
+            }
+        }
+
+        // Dibujar personajes estables
+        player.draw();
+        if (boss.active) boss.draw();
+
+        // Pantalla de Game Over
+        if (gameOver) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 40px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('¡GAME OVER!', canvas.width / 2, canvas.height / 2 - 20);
+            
+            ctx.font = '20px sans-serif';
+            ctx.fillText('El tomate terminó hecho puré.', canvas.width / 2, canvas.height / 2 + 20);
+            ctx.fillStyle = '#ff4757';
+            ctx.fillText(`Puntuación final: ${score}`, canvas.width / 2, canvas.height / 2 + 55);
+        }
+
+        requestAnimationFrame(update);
+    }
+
+    // Controladores de Eventos del Teclado
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' || e.code === 'ArrowUp') {
+            e.preventDefault(); // Evita scroll de pantalla
+            player.jump();
+        }
+        if (e.code === 'KeyF' || e.code === 'KeyX') {
+            fireBullet();
+        }
+    });
+
+    // Iniciar el juego
+    update();
